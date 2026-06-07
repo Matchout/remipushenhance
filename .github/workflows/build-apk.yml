@@ -69,8 +69,8 @@ jobs:
                   applicationId = "io.github.mipushenhance"
                   minSdk = 26
                   targetSdk = 35
-                  versionCode = 6
-                  versionName = "1.0.6"
+                  versionCode = 7
+                  versionName = "1.0.7"
               }
           }
 
@@ -162,14 +162,12 @@ jobs:
                           Object result = chain.proceed();
 
                           if (!(result instanceof List<?>)) {
-                              logi("RESULT_NOT_LIST package=" + pkg + " signature=" + signatureName + " result=" + result);
+                              logi("RESULT_NOT_LIST package=" + pkg + " signature=" + signatureName);
                               return result;
                           }
 
                           @SuppressWarnings("unchecked")
                           List<ResolveInfo> original = (List<ResolveInfo>) result;
-
-                          int beforeSize = original.size();
 
                           if (!original.isEmpty()) {
                               return result;
@@ -181,7 +179,6 @@ jobs:
                           logi("INJECTED package=" + pkg
                                   + " signature=" + signatureName
                                   + " resolvePackageName=" + SECURITY_CENTER
-                                  + " beforeSize=" + beforeSize
                                   + " afterSize=" + patched.size());
 
                           return patched;
@@ -232,5 +229,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MiPushEnhance-1.0.6-debug-apk
+          name: MiPushEnhance-1.0.7-debug-apk
           path: app/build/outputs/apk/debug/*.apk
