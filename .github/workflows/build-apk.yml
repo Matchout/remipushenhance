@@ -17,6 +17,8 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Create project
         run: |
           mkdir -p app/src/main/java/io/github/mipushenhance
@@ -177,8 +179,7 @@ jobs:
                           @SuppressWarnings("unchecked")
                           List<ResolveInfo> list = (List<ResolveInfo>) result;
 
-                          int beforeSize = list.size();
-                          logi("original result size=" + beforeSize);
+                          logi("original result size=" + list.size());
 
                           if (list.isEmpty()) {
                               ResolveInfo info = new ResolveInfo();
@@ -235,7 +236,7 @@ jobs:
           EOF
 
       - name: Build debug APK
-        run: ./gradlew :app:assembleDebug
+        run: gradle :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
