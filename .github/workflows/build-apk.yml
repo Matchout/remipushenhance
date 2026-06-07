@@ -1,4 +1,4 @@
-name: Build MiPush Enhance Test APK
+name: Build MiPush Enhance Diagnostic APK
 
 on:
   workflow_dispatch:
@@ -20,8 +20,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.10.2
+          cache-read-only: false
 
       - name: Create project
+        shell: bash
         run: |
           mkdir -p app/src/main/java/io/github/mipushenhance
           mkdir -p app/src/main/res/values
@@ -44,7 +46,7 @@ jobs:
               }
           }
 
-          rootProject.name = "MiPushEnhanceTest"
+          rootProject.name = "MiPushEnhanceDiagnostic"
           include(":app")
           EOF
 
@@ -67,8 +69,8 @@ jobs:
                   applicationId = "io.github.mipushenhance"
                   minSdk = 26
                   targetSdk = 35
-                  versionCode = 3
-                  versionName = "1.0-test-api101"
+                  versionCode = 5
+                  versionName = "1.0-diagnostic-api101-r5"
               }
           }
 
@@ -79,7 +81,7 @@ jobs:
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">MiPush Enhance Test</string>
+              <string name="app_name">MiPush Enhance Diagnostic</string>
           </resources>
           EOF
 
@@ -92,50 +94,44 @@ jobs:
           </manifest>
           EOF
 
-          cat > app/src/main/resources/META-INF/xposed/java_init.list <<'EOF'
-          io.github.mipushenhance.MiPushEnhance
-          EOF
-
-          cat > app/src/main/resources/META-INF/xposed/module.prop <<'EOF'
-          minApiVersion=101
-          targetApiVersion=101
-          staticScope=false
-          EOF
-
-          cat > app/src/main/resources/META-INF/xposed/scope.list <<'EOF'
-          android
-          com.xiaomi.xmsf
-          EOF
+          printf '%s\n' 'io.github.mipushenhance.MiPushEnhance' > app/src/main/resources/META-INF/xposed/java_init.list
+          printf '%s\n' 'android' 'com.xiaomi.xmsf' > app/src/main/resources/META-INF/xposed/scope.list
+          {
+            printf '%s\n' 'minApiVersion=101'
+            printf '%s\n' 'targetApiVersion=101'
+            printf '%s\n' 'staticScope=false'
+          } > app/src/main/resources/META-INF/xposed/module.prop
 
           cat > app/src/main/java/io/github/mipushenhance/MiPushEnhance.java <<'EOF'
           package io.github.mipushenhance;
 
-          import android.content.Intent;
+          import android.content.pm.ActivityInfo;
+          import android.content.pm.ApplicationInfo;
           import android.content.pm.PackageManager;
           import android.content.pm.ResolveInfo;
           import android.util.Log;
 
           import java.lang.reflect.Method;
+          import java.util.ArrayList;
           import java.util.List;
 
           import io.github.libxposed.api.XposedModule;
           import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
 
           public class MiPushEnhance extends XposedModule {
-              private static final String TAG = "MiPushEnhanceTest";
+              private static final String TAG = "MiPushEnhanceDiag";
               private static final String SECURITY_CENTER = "com.miui.securitycenter";
-
-              private String currentPackage = "unknown";
+              private static final String FAKE_RECEIVER = "com.miui.securitycenter.FakeReceiver";
 
               @Override
               public void onPackageReady(PackageReadyParam param) {
-                  currentPackage = param.getPackageName();
+                  final String pkg = param.getPackageName();
 
-                  if (!"android".equals(currentPackage) && !"com.xiaomi.xmsf".equals(currentPackage)) {
+                  if (!"android".equals(pkg) && !"com.xiaomi.xmsf".equals(pkg)) {
                       return;
                   }
 
-                  logi("loaded in package=" + currentPackage);
+                  logi("LOADED package=" + pkg);
 
                   try {
                       Class<?> cls = Class.forName(
@@ -144,57 +140,85 @@ jobs:
                               param.getClassLoader()
                       );
 
-                      hookQueryBroadcastReceivers(cls, Intent.class, int.class, "Intent,int");
-                      hookQueryBroadcastReceivers(cls, Intent.class, PackageManager.ResolveInfoFlags.class, "Intent,ResolveInfoFlags");
+                      hookQueryBroadcastReceivers(pkg, cls, android.content.Intent.class, int.class, "Intent,int");
+                      hookQueryBroadcastReceivers(pkg, cls, android.content.Intent.class, PackageManager.ResolveInfoFlags.class, "Intent,ResolveInfoFlags");
                   } catch (Throwable t) {
-                      loge("hook setup failed", t);
+                      loge("SETUP_FAILED package=" + pkg, t);
                   }
               }
 
               private void hookQueryBroadcastReceivers(
+                      final String pkg,
                       Class<?> cls,
                       Class<?> arg1,
                       Class<?> arg2,
-                      String signatureName
+                      final String signatureName
               ) {
                   try {
                       Method method = cls.getDeclaredMethod("queryBroadcastReceivers", arg1, arg2);
 
                       hook(method).intercept(chain -> {
-                          logi("HIT queryBroadcastReceivers(" + signatureName + "), package=" + currentPackage);
+                          logi("HIT package=" + pkg + " signature=" + signatureName);
 
                           Object result = chain.proceed();
 
                           if (!(result instanceof List<?>)) {
-                              logi("result is not List: " + result);
+                              logi("RESULT_NOT_LIST package=" + pkg + " signature=" + signatureName + " result=" + result);
                               return result;
                           }
 
                           @SuppressWarnings("unchecked")
-                          List<ResolveInfo> list = (List<ResolveInfo>) result;
+                          List<ResolveInfo> original = (List<ResolveInfo>) result;
 
-                          logi("original result size=" + list.size());
+                          int beforeSize = original.size();
+                          logi("RESULT_SIZE package=" + pkg + " signature=" + signatureName + " size=" + beforeSize);
 
-                          if (list.isEmpty()) {
-                              ResolveInfo info = new ResolveInfo();
-                              info.resolvePackageName = SECURITY_CENTER;
-                              list.add(info);
-
-                              logi("INJECTED fake ResolveInfo, resolvePackageName=" + SECURITY_CENTER
-                                      + ", afterSize=" + list.size());
-                          } else {
-                              logi("skip inject because result is not empty");
+                          if (!original.isEmpty()) {
+                              return result;
                           }
 
-                          return result;
+                          ArrayList<ResolveInfo> patched = new ArrayList<>(original);
+                          patched.add(createFakeResolveInfo());
+
+                          logi("INJECTED package=" + pkg
+                                  + " signature=" + signatureName
+                                  + " resolvePackageName=" + SECURITY_CENTER
+                                  + " beforeSize=" + beforeSize
+                                  + " afterSize=" + patched.size());
+
+                          return patched;
                       });
 
-                      logi("hooked queryBroadcastReceivers(" + signatureName + "): " + method);
+                      logi("HOOKED package=" + pkg + " signature=" + signatureName + " method=" + method);
                   } catch (NoSuchMethodException e) {
-                      logi("method not found: queryBroadcastReceivers(" + signatureName + ")");
+                      logi("METHOD_NOT_FOUND package=" + pkg + " signature=" + signatureName);
                   } catch (Throwable t) {
-                      loge("hook failed: queryBroadcastReceivers(" + signatureName + ")", t);
+                      loge("HOOK_FAILED package=" + pkg + " signature=" + signatureName, t);
                   }
+              }
+
+              private ResolveInfo createFakeResolveInfo() {
+                  ApplicationInfo applicationInfo = new ApplicationInfo();
+                  applicationInfo.packageName = SECURITY_CENTER;
+                  applicationInfo.flags = ApplicationInfo.FLAG_INSTALLED | ApplicationInfo.FLAG_SYSTEM;
+                  applicationInfo.enabled = true;
+
+                  ActivityInfo activityInfo = new ActivityInfo();
+                  activityInfo.packageName = SECURITY_CENTER;
+                  activityInfo.name = FAKE_RECEIVER;
+                  activityInfo.exported = true;
+                  activityInfo.enabled = true;
+                  activityInfo.applicationInfo = applicationInfo;
+
+                  ResolveInfo info = new ResolveInfo();
+                  info.resolvePackageName = SECURITY_CENTER;
+                  info.activityInfo = activityInfo;
+                  info.isDefault = true;
+                  info.priority = 0;
+                  info.preferredOrder = 0;
+                  info.match = 0;
+
+                  return info;
               }
 
               private void logi(String msg) {
@@ -213,5 +237,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MiPushEnhanceTest-debug-apk
+          name: MiPushEnhanceDiagnostic-debug-apk
           path: app/build/outputs/apk/debug/*.apk
