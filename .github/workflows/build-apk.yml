@@ -1,4 +1,4 @@
-name: Build MiPush Enhance Diagnostic APK
+name: Build MiPush Enhance APK
 
 on:
   workflow_dispatch:
@@ -46,7 +46,7 @@ jobs:
               }
           }
 
-          rootProject.name = "MiPushEnhanceDiagnostic"
+          rootProject.name = "MiPushEnhance"
           include(":app")
           EOF
 
@@ -69,8 +69,8 @@ jobs:
                   applicationId = "io.github.mipushenhance"
                   minSdk = 26
                   targetSdk = 35
-                  versionCode = 5
-                  versionName = "1.0-diagnostic-api101-r5"
+                  versionCode = 6
+                  versionName = "1.0.6"
               }
           }
 
@@ -81,7 +81,7 @@ jobs:
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">MiPush Enhance Diagnostic</string>
+              <string name="app_name">MiPush Enhance</string>
           </resources>
           EOF
 
@@ -95,7 +95,7 @@ jobs:
           EOF
 
           printf '%s\n' 'io.github.mipushenhance.MiPushEnhance' > app/src/main/resources/META-INF/xposed/java_init.list
-          printf '%s\n' 'android' 'com.xiaomi.xmsf' > app/src/main/resources/META-INF/xposed/scope.list
+          printf '%s\n' 'com.xiaomi.xmsf' > app/src/main/resources/META-INF/xposed/scope.list
           {
             printf '%s\n' 'minApiVersion=101'
             printf '%s\n' 'targetApiVersion=101'
@@ -119,7 +119,8 @@ jobs:
           import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
 
           public class MiPushEnhance extends XposedModule {
-              private static final String TAG = "MiPushEnhanceDiag";
+              private static final String TAG = "MiPushEnhance";
+              private static final String TARGET_PACKAGE = "com.xiaomi.xmsf";
               private static final String SECURITY_CENTER = "com.miui.securitycenter";
               private static final String FAKE_RECEIVER = "com.miui.securitycenter.FakeReceiver";
 
@@ -127,7 +128,7 @@ jobs:
               public void onPackageReady(PackageReadyParam param) {
                   final String pkg = param.getPackageName();
 
-                  if (!"android".equals(pkg) && !"com.xiaomi.xmsf".equals(pkg)) {
+                  if (!TARGET_PACKAGE.equals(pkg)) {
                       return;
                   }
 
@@ -158,8 +159,6 @@ jobs:
                       Method method = cls.getDeclaredMethod("queryBroadcastReceivers", arg1, arg2);
 
                       hook(method).intercept(chain -> {
-                          logi("HIT package=" + pkg + " signature=" + signatureName);
-
                           Object result = chain.proceed();
 
                           if (!(result instanceof List<?>)) {
@@ -171,7 +170,6 @@ jobs:
                           List<ResolveInfo> original = (List<ResolveInfo>) result;
 
                           int beforeSize = original.size();
-                          logi("RESULT_SIZE package=" + pkg + " signature=" + signatureName + " size=" + beforeSize);
 
                           if (!original.isEmpty()) {
                               return result;
@@ -189,7 +187,7 @@ jobs:
                           return patched;
                       });
 
-                      logi("HOOKED package=" + pkg + " signature=" + signatureName + " method=" + method);
+                      logi("HOOKED package=" + pkg + " signature=" + signatureName);
                   } catch (NoSuchMethodException e) {
                       logi("METHOD_NOT_FOUND package=" + pkg + " signature=" + signatureName);
                   } catch (Throwable t) {
@@ -214,9 +212,6 @@ jobs:
                   info.resolvePackageName = SECURITY_CENTER;
                   info.activityInfo = activityInfo;
                   info.isDefault = true;
-                  info.priority = 0;
-                  info.preferredOrder = 0;
-                  info.match = 0;
 
                   return info;
               }
@@ -237,5 +232,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MiPushEnhanceDiagnostic-debug-apk
+          name: MiPushEnhance-1.0.6-debug-apk
           path: app/build/outputs/apk/debug/*.apk
