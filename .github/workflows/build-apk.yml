@@ -1,0 +1,244 @@
+name: Build MiPush Enhance Test APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Create project
+        run: |
+          mkdir -p app/src/main/java/io/github/mipushenhance
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/resources/META-INF/xposed
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "MiPushEnhanceTest"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+          }
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+          }
+
+          android {
+              namespace = "io.github.mipushenhance"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "io.github.mipushenhance"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0-test"
+              }
+          }
+
+          dependencies {
+              compileOnly("io.github.libxposed:api:101.0.1")
+          }
+          EOF
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">MiPush Enhance Test</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="@string/app_name"
+                  android:allowBackup="false"
+                  android:supportsRtl="true" />
+          </manifest>
+          EOF
+
+          cat > app/src/main/resources/META-INF/xposed/java_init.list <<'EOF'
+          io.github.mipushenhance.MiPushEnhance
+          EOF
+
+          cat > app/src/main/resources/META-INF/xposed/module.prop <<'EOF'
+          minApiVersion=101
+          targetApiVersion=101
+          staticScope=false
+          EOF
+
+          cat > app/src/main/resources/META-INF/xposed/scope.list <<'EOF'
+          android
+          com.xiaomi.xmsf
+          EOF
+
+          cat > app/src/main/java/io/github/mipushenhance/MiPushEnhance.java <<'EOF'
+          package io.github.mipushenhance;
+
+          import android.content.ComponentName;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.content.pm.ResolveInfo;
+
+          import java.lang.reflect.Method;
+          import java.util.List;
+
+          import io.github.libxposed.api.XposedModule;
+          import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
+
+          public class MiPushEnhance extends XposedModule {
+              private static final String TAG = "MiPushEnhanceTest";
+              private static final String SECURITY_CENTER = "com.miui.securitycenter";
+              private static final boolean DEBUG_LOG = true;
+
+              private String currentPackage = "unknown";
+
+              @Override
+              public void onPackageReady(PackageReadyParam param) {
+                  currentPackage = param.getPackageName();
+
+                  if (!"android".equals(currentPackage) && !"com.xiaomi.xmsf".equals(currentPackage)) {
+                      return;
+                  }
+
+                  logi("loaded in package=" + currentPackage);
+
+                  try {
+                      Class<?> cls = Class.forName(
+                              "android.app.ApplicationPackageManager",
+                              false,
+                              param.getClassLoader()
+                      );
+
+                      hookQueryBroadcastReceivers(cls, Intent.class, int.class, "Intent,int");
+                      hookQueryBroadcastReceivers(cls, Intent.class, PackageManager.ResolveInfoFlags.class, "Intent,ResolveInfoFlags");
+                  } catch (Throwable t) {
+                      loge("hook setup failed", t);
+                  }
+              }
+
+              private void hookQueryBroadcastReceivers(
+                      Class<?> cls,
+                      Class<?> arg1,
+                      Class<?> arg2,
+                      String signatureName
+              ) {
+                  try {
+                      Method method = cls.getDeclaredMethod("queryBroadcastReceivers", arg1, arg2);
+
+                      hook(method).intercept(chain -> {
+                          Object[] args = chain.args();
+                          Intent intent = null;
+
+                          if (args != null && args.length > 0 && args[0] instanceof Intent) {
+                              intent = (Intent) args[0];
+                          }
+
+                          logi("HIT queryBroadcastReceivers(" + signatureName + ")"
+                                  + ", package=" + currentPackage
+                                  + ", intent=" + dumpIntent(intent));
+
+                          Object result = chain.proceed();
+
+                          if (!(result instanceof List<?>)) {
+                              logi("result is not List: " + result);
+                              return result;
+                          }
+
+                          @SuppressWarnings("unchecked")
+                          List<ResolveInfo> list = (List<ResolveInfo>) result;
+
+                          int beforeSize = list.size();
+                          logi("original result size=" + beforeSize);
+
+                          if (list.isEmpty()) {
+                              ResolveInfo info = new ResolveInfo();
+                              info.resolvePackageName = SECURITY_CENTER;
+                              list.add(info);
+
+                              logi("INJECTED fake ResolveInfo, resolvePackageName=" + SECURITY_CENTER
+                                      + ", afterSize=" + list.size()
+                                      + ", intent=" + dumpIntent(intent));
+                          } else {
+                              logi("skip inject because result is not empty");
+                          }
+
+                          return result;
+                      });
+
+                      logi("hooked queryBroadcastReceivers(" + signatureName + "): " + method);
+                  } catch (NoSuchMethodException e) {
+                      logi("method not found: queryBroadcastReceivers(" + signatureName + ")");
+                  } catch (Throwable t) {
+                      loge("hook failed: queryBroadcastReceivers(" + signatureName + ")", t);
+                  }
+              }
+
+              private String dumpIntent(Intent intent) {
+                  if (intent == null) {
+                      return "null";
+                  }
+
+                  String action = intent.getAction();
+                  String pkg = intent.getPackage();
+                  ComponentName component = intent.getComponent();
+                  String data = intent.getDataString();
+                  String categories = String.valueOf(intent.getCategories());
+
+                  return "{action=" + action
+                          + ", package=" + pkg
+                          + ", component=" + component
+                          + ", data=" + data
+                          + ", categories=" + categories
+                          + "}";
+              }
+
+              private void logi(String msg) {
+                  if (DEBUG_LOG) {
+                      log(TAG + ": " + msg);
+                  }
+              }
+
+              private void loge(String msg, Throwable t) {
+                  log(TAG + ": " + msg + ": " + t);
+              }
+          }
+          EOF
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiPushEnhanceTest-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
